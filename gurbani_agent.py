@@ -58,7 +58,6 @@ def ask_openai(chat_history: List[Dict[str, str]]) -> str:
     completion = client.chat.completions.create(
         model=model,
         messages=build_openai_messages(chat_history),
-        temperature=0.4,
     )
     return completion.choices[0].message.content or "I could not generate a response."
 
@@ -96,7 +95,6 @@ def ask_anthropic(chat_history: List[Dict[str, str]]) -> str:
                 model=model,
                 system=build_system_prompt(),
                 messages=chat_history,
-                temperature=0.4,
                 max_tokens=800,
             )
             if completion.content and len(completion.content) > 0:

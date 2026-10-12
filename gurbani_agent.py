@@ -24,7 +24,6 @@ CLAUDE_MODELS: List[str] = [
     "claude-haiku-5-5",
     "claude-sonnet-5-5",
     "claude-opus-5-5",
-    "claude-fable-5-1",
 ]
 
 # Generation params the Anthropic Messages API does not accept.

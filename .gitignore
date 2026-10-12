@@ -1,0 +1,12 @@
+# API keys and local environment files: never commit these
+.env
+.env.*
+*.key
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Virtual environments
+.venv/
+venv/

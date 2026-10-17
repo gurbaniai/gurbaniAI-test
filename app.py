@@ -86,7 +86,7 @@ def render_chat_column(active_model: str) -> None:
             render_controls_toolbar()
 
     with st.expander("Active settings for next message", expanded=st.session_state.controls_open):
-        st.markdown(format_active_settings(provider, default_prompt))
+        st.markdown(format_active_settings(provider, default_prompt, active_model))
         if provider == "anthropic":
             st.caption(f"Claude model: `{active_model}`")
 
@@ -96,7 +96,7 @@ def render_chat_column(active_model: str) -> None:
 
     user_prompt = st.chat_input("Ask about Gurbani meaning, context, or life application...")
     if user_prompt:
-        system_prompt, gen_params, use_stream, _notes = build_request_preview(provider, default_prompt)
+        system_prompt, gen_params, use_stream, _notes = build_request_preview(provider, default_prompt, active_model)
 
         st.session_state.messages.append({"role": "user", "content": user_prompt})
         with st.chat_message("user"):

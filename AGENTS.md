@@ -36,7 +36,7 @@ GurbaniAI is a Sikh studies assistant: a Streamlit chat app (plus a small CLI) t
 **One entry point.** UI and CLI call `ask_gurbani_llm(...)`. It picks the provider from `LLM_PROVIDER` and returns a plain string. Failures are returned as readable strings rather than raised, so the chat never crashes.
 
 **Params flow:** `st.session_state.chat_params` → `chat_controls.params_for_provider()` → provider function. Only send what the target API accepts:
-- Anthropic rejects `frequency_penalty` / `presence_penalty` (filtered via `ANTHROPIC_UNSUPPORTED_PARAMS`) and requires `max_tokens` (default `DEFAULT_CLAUDE_MAX_TOKENS` = 4096). `top_k` is sent only to Claude.
+- Anthropic rejects `frequency_penalty` / `presence_penalty` (filtered via `ANTHROPIC_UNSUPPORTED_PARAMS`) and requires `max_tokens` (default `DEFAULT_CLAUDE_MAX_TOKENS` = 4096). `top_k` is sent only to Claude. Opus 4.7+ and other current Claude models reject `temperature` / `top_p` / `top_k`; `claude_rejects_sampling()` drops them for those models (Opus 4.6 still gets them).
 - OpenAI reasoning models (`o1`/`o3`/`o4`/`gpt-5` prefixes) need `max_completion_tokens` and reject sampling params; `build_openai_params()` handles this. `reasoning_effort` is sent only to reasoning models.
 - `top_k`, `min_p`, `mirostat*` go via `extra_body` only when `OPENAI_BASE_URL` points at a non-OpenAI server. OpenAI's own API rejects them.
 - When adding a control, update `params_for_provider()` and `unsent_params()` so the "Active settings" preview stays truthful about what is sent.

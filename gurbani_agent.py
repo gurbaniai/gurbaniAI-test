@@ -28,6 +28,18 @@ CLAUDE_MODELS: List[str] = [
 # Generation params the Anthropic Messages API does not accept.
 ANTHROPIC_UNSUPPORTED_PARAMS = frozenset({"frequency_penalty", "presence_penalty"})
 
+# Opus 4.7 and newer Claude models reject sampling params with a 400; Opus 4.6 still accepts them.
+CLAUDE_SAMPLING_PARAMS = frozenset({"temperature", "top_p", "top_k"})
+CLAUDE_NO_SAMPLING_PREFIXES = (
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-5",
+    "claude-fable",
+    "claude-mythos",
+)
+
 # Anthropic requires max_tokens on every call; this is generous enough for a full answer.
 DEFAULT_CLAUDE_MAX_TOKENS = 4096
 
@@ -90,6 +102,10 @@ def openai_compatible_base_url() -> str | None:
 
 def is_openai_reasoning_model(model: str) -> bool:
     return model.lower().startswith(OPENAI_REASONING_PREFIXES)
+
+
+def claude_rejects_sampling(model: str) -> bool:
+    return model.lower().startswith(CLAUDE_NO_SAMPLING_PREFIXES)
 
 
 def build_openai_params(model: str, params: Dict | None) -> Dict:
@@ -215,13 +231,18 @@ def ask_anthropic(
     max_tokens = int(gen.pop("max_tokens", DEFAULT_CLAUDE_MAX_TOKENS))
 
     for candidate in model_candidates:
+        candidate_gen = {
+            k: v
+            for k, v in gen.items()
+            if not (k in CLAUDE_SAMPLING_PARAMS and claude_rejects_sampling(candidate))
+        }
         try:
             completion = client.messages.create(
                 model=candidate,
                 system=prompt,
                 messages=chat_history,
                 max_tokens=max_tokens,
-                **gen,
+                **candidate_gen,
             )
             text = "".join(
                 block.text for block in (completion.content or []) if getattr(block, "type", "") == "text"

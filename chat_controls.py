@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import streamlit as st
 
-from gurbani_agent import openai_compatible_base_url
+from gurbani_agent import CLAUDE_SAMPLING_PARAMS, claude_rejects_sampling, openai_compatible_base_url
 
 DEFAULT_CHAT_PARAMS: Dict[str, Any] = {
     "stream_response": None,
@@ -39,12 +39,14 @@ LOCAL_SAMPLING_PARAMS = ("top_k", "min_p", "mirostat", "mirostat_eta", "mirostat
 _REASONING_BLOCK = re.compile(r"<(think|thinking|reasoning)>(.*?)</\1>", re.DOTALL | re.IGNORECASE)
 
 
-def unsent_params(provider: str) -> frozenset:
-    """Controls that are stored in the UI but not forwarded to the active provider."""
+def unsent_params(provider: str, model: Optional[str] = None) -> frozenset:
+    """Controls that are stored in the UI but not forwarded to the active provider/model."""
     # Answers come from the model's own knowledge; there are no tools to call.
     unsent = {"function_calling"}
     if provider == "anthropic":
         unsent.update({"min_p", "mirostat", "mirostat_eta", "mirostat_tau"})
+        if model and claude_rejects_sampling(model):
+            unsent.update(CLAUDE_SAMPLING_PARAMS)
     elif not openai_compatible_base_url():
         unsent.update(LOCAL_SAMPLING_PARAMS)
     return frozenset(unsent)
@@ -98,7 +100,7 @@ def get_effective_system_prompt(default_prompt: str) -> str:
     return default_prompt
 
 
-def params_for_provider(provider: str, params: Dict[str, Any]) -> Dict[str, Any]:
+def params_for_provider(provider: str, params: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
     """Map stored controls to provider SDK kwargs (only supported fields)."""
     out: Dict[str, Any] = {}
     if params.get("temperature") is not None:
@@ -137,6 +139,8 @@ def params_for_provider(provider: str, params: Dict[str, Any]) -> Dict[str, Any]
         if extra:
             # extra_body merges these into the JSON request body as-is.
             out["extra_body"] = extra
+    for key in unsent_params(provider, model):
+        out.pop(key, None)
     return out
 
 
@@ -147,23 +151,26 @@ def should_stream(params: Dict[str, Any]) -> bool:
     return bool(sr)
 
 
-def build_request_preview(provider: str, default_prompt: str) -> Tuple[str, Dict[str, Any], bool, List[str]]:
+def build_request_preview(
+    provider: str, default_prompt: str, model: Optional[str] = None
+) -> Tuple[str, Dict[str, Any], bool, List[str]]:
     """Return settings used for the *next* chat completion."""
     system_prompt = get_effective_system_prompt(default_prompt)
-    gen_params = params_for_provider(provider, st.session_state.chat_params)
+    gen_params = params_for_provider(provider, st.session_state.chat_params, model)
     stream = should_stream(st.session_state.chat_params)
     notes: List[str] = []
-    skipped = unsent_params(provider)
+    skipped = unsent_params(provider, model)
+    target = f"{provider} ({model})" if model else provider
     for key, val in st.session_state.chat_params.items():
         if val is not None and key in skipped:
-            notes.append(f"{key} is set in UI but not sent to {provider}.")
+            notes.append(f"{key} is set in UI but not sent to {target}.")
     if st.session_state.chat_params.get("reasoning_tags"):
         notes.append("reasoning_tags: `<think>` blocks in replies are shown in a collapsible Reasoning section.")
     return system_prompt, gen_params, stream, notes
 
 
-def format_active_settings(provider: str, default_prompt: str) -> str:
-    system_prompt, gen_params, stream, notes = build_request_preview(provider, default_prompt)
+def format_active_settings(provider: str, default_prompt: str, model: Optional[str] = None) -> str:
+    system_prompt, gen_params, stream, notes = build_request_preview(provider, default_prompt, model)
     lines = [
         f"**Next message uses:** stream={'on' if stream else 'off'}",
     ]

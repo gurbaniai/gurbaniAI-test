@@ -1,7 +1,11 @@
 """GurbaniAI agent core: system prompt and LLM provider calls."""
 
+import json
 import os
+import re
 from typing import Dict, List
+
+import banidb
 
 try:
     import anthropic
@@ -40,8 +44,9 @@ CLAUDE_NO_SAMPLING_PREFIXES = (
     "claude-mythos",
 )
 
-# Anthropic requires max_tokens on every call; this is generous enough for a full answer.
-DEFAULT_CLAUDE_MAX_TOKENS = 4096
+# Anthropic requires max_tokens on every call. Thinking on current Opus models counts
+# against it too, so leave room for a full answer.
+DEFAULT_CLAUDE_MAX_TOKENS = 16000
 
 # OpenAI reasoning models (o-series, gpt-5 family) reject sampling params and
 # take max_completion_tokens instead of max_tokens. Their hidden reasoning also
@@ -53,7 +58,7 @@ OPENAI_REASONING_UNSUPPORTED = frozenset(
 
 TRUNCATION_NOTE = (
     "\n\n_(Response stopped at the output length limit and may be incomplete. "
-    "Raise `max_tokens` in Controls for a longer answer.)_"
+    "Ask a narrower question, or ask it to continue.)_"
 )
 
 
@@ -112,7 +117,7 @@ def claude_rejects_sampling(model: str) -> bool:
 
 
 def build_openai_params(model: str, params: Dict | None) -> Dict:
-    """Translate Controls params into kwargs the chosen OpenAI model accepts."""
+    """Translate generation params into kwargs the chosen OpenAI model accepts."""
     out = dict(params or {})
     if is_openai_reasoning_model(model):
         for key in OPENAI_REASONING_UNSUPPORTED:
@@ -163,7 +168,7 @@ def ask_openai(
             chunks = client.chat.completions.create(stream=True, **kwargs)
         except Exception as exc:  # noqa: BLE001
             return (
-                "OpenAI streaming request failed. Check Controls (stream / params).\n\n"
+                "OpenAI streaming request failed.\n\n"
                 f"Sent params: {generation_params or {}}\n\n"
                 f"Error: {exc}"
             )
@@ -183,7 +188,7 @@ def ask_openai(
         completion = client.chat.completions.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         return (
-            "OpenAI request failed. Check your Controls params (temperature, max_tokens, etc.).\n\n"
+            "OpenAI request failed. Check your `OPENAI_MODEL` and API key.\n\n"
             f"Sent params: {generation_params or {}}\n\n"
             f"Error: {exc}"
         )
@@ -270,6 +275,114 @@ def ask_anthropic(
     return "I could not generate a response."
 
 
+BANIDB_QUERY_REQUEST = (
+    "Do not answer the question below. Instead, choose BaniDB search words for it.\n"
+    "Reply with only a JSON object, no other text, in this form:\n"
+    '{{"english": ["anger"], "gurmukhi": ["ਕਰੋਧ"]}}\n'
+    "- english: up to 4 single English words likely to appear in English translations of the relevant lines.\n"
+    "- gurmukhi: up to 4 single Gurmukhi words (Unicode) likely to appear in the relevant lines themselves.\n"
+    "Use single words only, never phrases.\n\n"
+    "Question: {question}"
+)
+
+BANIDB_ONLY_INSTRUCTIONS = (
+    "BaniDB-only mode: the passages below were found in BaniDB for the user's latest question. "
+    "Answer using only these passages. You may explain and connect them, but every line of Gurbani "
+    "you quote, every citation, and every claim about what Gurbani says must come from these passages. "
+    "Copy Gurmukhi, transliteration, translation, and source exactly as given. "
+    "Do not add verses, page numbers, or citations from your own knowledge. "
+    "If the passages do not answer the question, say so plainly."
+)
+
+# Opening words of the readable failure strings returned by ask_anthropic / ask_openai.
+PROVIDER_FAILURE_PREFIXES = (
+    "Claude mode is enabled",
+    "The Anthropic SDK",
+    "Claude request failed",
+    "OpenAI mode is enabled",
+    "The OpenAI SDK",
+    "OpenAI request failed",
+    "OpenAI streaming request failed",
+)
+
+_ENGLISH_STOPWORDS = frozenset(
+    "a an and are about does do for from gurbani guru how i in is it me of on say says "
+    "tell the to what when where which who why with".split()
+)
+
+
+def _fallback_banidb_queries(question: str) -> tuple[List[str], List[str]]:
+    """Pick search words without the model, if its reply could not be parsed."""
+    gurmukhi = re.findall(r"[਀-੿]+", question)
+    english = [
+        w for w in re.findall(r"[A-Za-z]+", question.lower())
+        if len(w) > 2 and w not in _ENGLISH_STOPWORDS
+    ]
+    return list(dict.fromkeys(english))[:4], list(dict.fromkeys(gurmukhi))[:4]
+
+
+def _plan_banidb_queries(question: str, reply: str) -> tuple[List[str], List[str]]:
+    """Read the model's search-word reply; returns (english, gurmukhi)."""
+    match = re.search(r"\{.*\}", reply, re.DOTALL)
+    try:
+        plan = json.loads(match.group(0)) if match else {}
+    except json.JSONDecodeError:
+        plan = {}
+    english = [str(w).strip() for w in plan.get("english") or [] if str(w).strip()][:4]
+    gurmukhi = [str(w).strip() for w in plan.get("gurmukhi") or [] if str(w).strip()][:4]
+    if not english and not gurmukhi:
+        return _fallback_banidb_queries(question)
+    return english, gurmukhi
+
+
+def ask_with_banidb(
+    chat_history: List[Dict[str, str]],
+    *,
+    system_prompt: str | None = None,
+    model: str | None = None,
+) -> str:
+    """Answer only from BaniDB passages: the model picks search words, BaniDB supplies the lines.
+
+    If BaniDB fails or finds nothing, say so rather than answering from the model's own knowledge.
+    """
+    prompt = (system_prompt or "").strip() or build_system_prompt()
+    question = next(
+        (m["content"] for m in reversed(chat_history) if m.get("role") == "user"), ""
+    )
+    plan_reply = _ask_provider(
+        [{"role": "user", "content": BANIDB_QUERY_REQUEST.format(question=question)}],
+        system_prompt=prompt,
+        model=model,
+    )
+    if plan_reply.startswith(PROVIDER_FAILURE_PREFIXES):
+        return plan_reply
+    english, gurmukhi = _plan_banidb_queries(question, plan_reply)
+    searched = ", ".join(gurmukhi + english) or "(no search words)"
+
+    try:
+        verses = banidb.search_many(english, gurmukhi)
+    except banidb.BaniDBError as exc:
+        return (
+            "BaniDB could not be reached, so no answer was given "
+            "(BaniDB-only mode does not fall back to the model's own knowledge).\n\n"
+            f"Error: {exc}"
+        )
+    if not verses:
+        return (
+            f"BaniDB found no lines for: {searched}.\n\n"
+            "Try other words, a Gurmukhi word, or switch off **Use BaniDB Only**."
+        )
+
+    banidb_prompt = (
+        prompt + "\n\n" + BANIDB_ONLY_INSTRUCTIONS + "\n\nBaniDB passages:\n\n"
+        + banidb.format_passages(verses)
+    )
+    answer = _ask_provider(chat_history, system_prompt=banidb_prompt, model=model)
+    if answer.startswith(PROVIDER_FAILURE_PREFIXES):
+        return answer
+    return answer + f"\n\n_Answered from BaniDB ({len(verses)} lines found for: {searched})._"
+
+
 def ask_gurbani_llm(
     chat_history: List[Dict[str, str]],
     *,
@@ -277,13 +390,34 @@ def ask_gurbani_llm(
     generation_params: Dict | None = None,
     stream: bool = False,
     model: str | None = None,
+    banidb_only: bool = False,
 ) -> str:
     """Send chat history to configured provider and return response.
 
-    Answers come from the model's own knowledge, guided by the system prompt;
-    no external lookup or retrieval is used. `model` overrides the provider's
-    env-configured model.
+    By default answers come from the model's own knowledge, guided by the system
+    prompt. With `banidb_only`, answers are built only from BaniDB search results
+    (see `ask_with_banidb`). `model` overrides the provider's env-configured model.
     """
+    if banidb_only:
+        return ask_with_banidb(chat_history, system_prompt=system_prompt, model=model)
+    return _ask_provider(
+        chat_history,
+        system_prompt=system_prompt,
+        generation_params=generation_params,
+        stream=stream,
+        model=model,
+    )
+
+
+def _ask_provider(
+    chat_history: List[Dict[str, str]],
+    *,
+    system_prompt: str | None = None,
+    generation_params: Dict | None = None,
+    stream: bool = False,
+    model: str | None = None,
+) -> str:
+    """Call the provider chosen by LLM_PROVIDER and return its reply as a string."""
     provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
     if provider == "anthropic":
         return ask_anthropic(

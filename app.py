@@ -1,13 +1,7 @@
+import html
+
 import streamlit as st
 
-from chat_controls import (
-    build_request_preview,
-    format_active_settings,
-    init_controls_state,
-    render_controls_panel,
-    render_controls_toolbar,
-    split_reasoning,
-)
 from gurbani_agent import (
     CLAUDE_MODELS,
     ask_gurbani_llm,
@@ -17,12 +11,53 @@ from gurbani_agent import (
 
 st.set_page_config(page_title="GurbaniAI", page_icon="🪯", layout="wide")
 
-init_controls_state()
-
+# Session state lives on the server for this browser tab only; nothing is stored
+# in cookies or browser storage, and a page refresh clears it.
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "extra_instructions" not in st.session_state:
+    st.session_state.extra_instructions = ""
+
 provider, current_model = get_provider_info()
 default_prompt = build_system_prompt()
+
+
+def get_effective_system_prompt() -> str:
+    """Master prompt first, always; the user's instructions for this session follow it."""
+    extra = (st.session_state.get("extra_instructions") or "").strip()
+    if extra:
+        return default_prompt + "\n\nAdditional instructions:\n" + extra
+    return default_prompt
+
+
+@st.dialog("Master Prompt", width="large")
+def master_prompt_dialog() -> None:
+    """Let the user add their own instructions after the master prompt, for this session."""
+    # A native title tooltip shows the full master prompt when hovering the info icon.
+    st.markdown(
+        f'**Master prompt** <span title="{html.escape(default_prompt, quote=True)}" '
+        'style="cursor: help;">ⓘ</span>',
+        unsafe_allow_html=True,
+    )
+    st.caption("The master prompt is always sent first. Hover the ⓘ icon to read it.")
+    # The text is kept in `extra_instructions`, not the widget key: Streamlit drops a
+    # widget's value once the dialog closes and the widget is no longer drawn.
+    text = st.text_area(
+        "Instructions",
+        value=st.session_state.extra_instructions,
+        placeholder="You can add your own prompt instructions on top of the master prompt.",
+        help="You can add your own prompt instructions on top of the master prompt. "
+        "They apply to this session only and are cleared when the page is refreshed.",
+        height=180,
+        key="mp_instructions_input",
+    )
+    save_col, clear_col = st.columns(2)
+    if save_col.button("Save", type="primary", width="stretch"):
+        st.session_state.extra_instructions = text.strip()
+        st.rerun()
+    if clear_col.button("Clear", width="stretch"):
+        st.session_state.extra_instructions = ""
+        st.rerun()
 
 
 def render_model_picker() -> str:
@@ -45,88 +80,60 @@ def render_sidebar() -> str:
         st.subheader("How to use")
         st.markdown(
             "- Ask about a shabad, line, or theme.\n"
-            "- Open **Controls** to add extra instructions and tune model params.\n"
-            "- Changes apply to the **next** message you send (see preview below the title)."
+            "- Use **Master Prompt** to add your own instructions for this session.\n"
+            "- Switch on **Use BaniDB Only** to answer only from BaniDB search results."
         )
+        st.divider()
+        if st.button("Master Prompt", width="stretch"):
+            master_prompt_dialog()
+        if st.session_state.extra_instructions:
+            st.caption("Your instructions are active for this session.")
         st.divider()
         st.caption(f"Provider: `{provider}`")
         if provider == "anthropic":
             active_model = render_model_picker()
         else:
             st.caption(f"Model: `{current_model}`")
+        st.toggle(
+            "Use BaniDB Only",
+            key="banidb_only",
+            help="Answers use only lines found in BaniDB. The model picks search words and "
+            "explains the lines, but does not quote Gurbani from its own knowledge.",
+        )
         st.divider()
-        if st.button("Controls", help="Open parameter fine-tuning panel"):
-            st.session_state.controls_open = True
-            st.rerun()
         if st.button("Clear chat"):
             st.session_state.messages = []
             st.rerun()
     return active_model
 
 
-def render_message(role: str, content: str) -> None:
-    """Render a chat message; with Reasoning Tags on, <think> blocks collapse into an expander."""
-    if role == "assistant" and st.session_state.chat_params.get("reasoning_tags"):
-        reasoning, answer = split_reasoning(content)
-        if reasoning:
-            with st.expander("Reasoning"):
-                st.markdown(reasoning)
-        st.markdown(answer)
-    else:
-        st.markdown(content)
-
-
 def render_chat_column(active_model: str) -> None:
-    header_left, header_right = st.columns([4, 1], vertical_alignment="center")
-    with header_left:
-        st.title("🪯 GurbaniAI")
-        st.caption("Ask about meanings and teachings in Sikh scriptures.")
-    with header_right:
-        if not st.session_state.controls_open:
-            render_controls_toolbar()
-
-    with st.expander("Active settings for next message", expanded=st.session_state.controls_open):
-        st.markdown(format_active_settings(provider, default_prompt, active_model))
-        if provider == "anthropic":
-            st.caption(f"Claude model: `{active_model}`")
+    st.title("🪯 GurbaniAI")
+    st.caption("Ask about meanings and teachings in Sikh scriptures.")
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
-            render_message(message["role"], message["content"])
+            st.markdown(message["content"])
 
     user_prompt = st.chat_input("Ask about Gurbani meaning, context, or life application...")
     if user_prompt:
-        system_prompt, gen_params, use_stream, _notes = build_request_preview(provider, default_prompt, active_model)
-
         st.session_state.messages.append({"role": "user", "content": user_prompt})
         with st.chat_message("user"):
             st.markdown(user_prompt)
 
+        banidb_only = st.session_state.get("banidb_only", False)
         with st.chat_message("assistant"):
-            meta = f"_Using: {gen_params or 'provider defaults'}_"
-            with st.spinner("Reflecting on Gurbani..."):
+            spinner = "Searching BaniDB..." if banidb_only else "Reflecting on Gurbani..."
+            with st.spinner(spinner):
                 answer = ask_gurbani_llm(
                     st.session_state.messages,
-                    system_prompt=system_prompt,
-                    generation_params=gen_params,
-                    stream=use_stream,
+                    system_prompt=get_effective_system_prompt(),
                     model=active_model,
+                    banidb_only=banidb_only,
                 )
-            render_message("assistant", answer)
-            if gen_params or st.session_state.get("extra_instructions"):
-                st.caption(meta)
+            st.markdown(answer)
 
         st.session_state.messages.append({"role": "assistant", "content": answer})
 
 
-active_model = render_sidebar()
-
-if st.session_state.controls_open:
-    chat_col, controls_col = st.columns([3, 2], gap="large")
-    # Run controls first so widget values are in session_state before chat_input is handled.
-    with controls_col:
-        render_controls_panel()
-    with chat_col:
-        render_chat_column(active_model)
-else:
-    render_chat_column(active_model)
+render_chat_column(render_sidebar())

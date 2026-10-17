@@ -20,7 +20,7 @@ GurbaniAI is a Sikh studies assistant: a Streamlit chat app (plus a small CLI) t
 - On this Windows machine `python` may resolve to the Microsoft Store stub; use `py -3` if `python` fails.
 - Provider is chosen by env vars, read at startup:
   - `LLM_PROVIDER` = `openai` (default) or `anthropic`
-  - `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL` (default `DEFAULT_CLAUDE_MODEL` = `claude-sonnet-5-5`; the owner chose Sonnet over Haiku for accuracy)
+  - `ANTHROPIC_API_KEY`, optional `ANTHROPIC_MODEL` (default `DEFAULT_CLAUDE_MODEL` = `claude-opus-5-5`; the owner offers only Opus models, no Sonnet or Haiku)
   - `OPENAI_API_KEY`, optional `OPENAI_MODEL` (default `gpt-4o-mini`)
   - `OPENAI_BASE_URL` for an OpenAI-compatible local server (llama.cpp, vLLM); the API key is then optional
 - Web UI: `py -3 -m streamlit run app.py` · CLI: `py -3 agent.py`

@@ -20,7 +20,7 @@ Streamlit web app to ask about meanings and teachings in Sikh scriptures.
    - Claude:
      - `$env:LLM_PROVIDER="anthropic"`
      - `$env:ANTHROPIC_API_KEY="your_anthropic_key_here"`
-     - Default model is `claude-sonnet-5-5`; optional override: `$env:ANTHROPIC_MODEL="claude-opus-5-5"`
+     - Default model is `claude-opus-5-5`; optional override: `$env:ANTHROPIC_MODEL="claude-opus-4-8"`
 4. Run the agent:
    - **CLI:** `python agent.py`
    - **Web UI:** `python -m streamlit run app.py`

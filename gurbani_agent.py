@@ -14,16 +14,15 @@ except ImportError:
     OpenAI = None
 
 
-# Used when ANTHROPIC_MODEL is not set. Sonnet answered verse-source questions correctly
-# in testing where Haiku did not.
-DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+# Used when ANTHROPIC_MODEL is not set. Only Opus models are offered, for answer accuracy.
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
 
 CLAUDE_MODELS: List[str] = [
-    "claude-haiku-4-5",
-    "claude-sonnet-4-6",
-    "claude-haiku-5-5",
-    "claude-sonnet-5-5",
     "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
 ]
 
 # Generation params the Anthropic Messages API does not accept.
@@ -202,8 +201,8 @@ def ask_anthropic(
     if model:
         model_candidates = [configured_model]
     else:
-        # Fall back to another Sonnet, not Haiku, so a missing model never quietly lowers quality.
-        model_candidates = [configured_model, DEFAULT_CLAUDE_MODEL, "claude-sonnet-4-6"]
+        # Fall back only to other Opus models so a missing model never quietly lowers quality.
+        model_candidates = [configured_model, DEFAULT_CLAUDE_MODEL, "claude-opus-5"]
     model_candidates = list(dict.fromkeys(model_candidates))
 
     last_error: Exception | None = None

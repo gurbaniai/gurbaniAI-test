@@ -62,12 +62,13 @@ def master_prompt_dialog() -> None:
 
 def render_model_picker() -> str:
     """Let the user choose a Claude model; returns the model for the next message."""
-    # Keep the env-configured model first so a custom ANTHROPIC_MODEL is always selectable.
-    options = list(dict.fromkeys([current_model, *CLAUDE_MODELS]))
+    # Keep CLAUDE_MODELS' newest-to-oldest order; a custom ANTHROPIC_MODEL not in the
+    # list is added at the end so it stays selectable. The env/default model is preselected.
+    options = list(dict.fromkeys([*CLAUDE_MODELS, current_model]))
     return st.selectbox(
         "Claude model",
         options=options,
-        index=0,
+        index=options.index(current_model),
         key="claude_model",
         help="Used for the next message. Your API key must have access to the model.",
     )

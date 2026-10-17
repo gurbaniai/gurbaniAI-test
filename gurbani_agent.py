@@ -21,6 +21,7 @@ except ImportError:
 # Used when ANTHROPIC_MODEL is not set. Only Opus models are offered, for answer accuracy.
 DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
 
+# Shown in the model picker in this order: newest to oldest.
 CLAUDE_MODELS: List[str] = [
     "claude-opus-5-5",
     "claude-opus-5",

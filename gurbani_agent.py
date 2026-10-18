@@ -26,9 +26,19 @@ CLAUDE_MODELS: List[str] = [
     "claude-opus-5-5",
     "claude-opus-5",
     "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
 ]
+
+
+def is_haiku(model: str) -> bool:
+    return "haiku" in model.lower()
+
+
+def configured_claude_model() -> str:
+    """ANTHROPIC_MODEL, or the default. Haiku is not offered in this app, so it is ignored."""
+    model = os.getenv("ANTHROPIC_MODEL", "").strip()
+    if not model or is_haiku(model):
+        return DEFAULT_CLAUDE_MODEL
+    return model
 
 # Generation params the Anthropic Messages API does not accept.
 ANTHROPIC_UNSUPPORTED_PARAMS = frozenset({"frequency_penalty", "presence_penalty"})
@@ -206,7 +216,9 @@ def ask_anthropic(
     model: str | None = None,
 ) -> str:
     api_key = os.getenv("ANTHROPIC_API_KEY")
-    configured_model = model or os.getenv("ANTHROPIC_MODEL", DEFAULT_CLAUDE_MODEL)
+    if model and is_haiku(model):
+        model = None
+    configured_model = model or configured_claude_model()
     if not api_key:
         return (
             "Claude mode is enabled, but no API key is set.\n\n"
@@ -439,8 +451,6 @@ def _ask_provider(
 def get_provider_info() -> tuple[str, str]:
     """Return (provider, model) for display."""
     provider = os.getenv("LLM_PROVIDER", "openai").strip().lower()
-    model = os.getenv(
-        "ANTHROPIC_MODEL" if provider == "anthropic" else "OPENAI_MODEL",
-        DEFAULT_CLAUDE_MODEL if provider == "anthropic" else "gpt-4o-mini",
-    )
-    return provider, model
+    if provider == "anthropic":
+        return provider, configured_claude_model()
+    return provider, os.getenv("OPENAI_MODEL", "gpt-4o-mini")
